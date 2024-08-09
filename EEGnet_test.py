@@ -145,7 +145,7 @@ valid_loader = DataLoader(dataset, batch_size=16, sampler=valid_sampler)
 # Defining EEGNet in PyTorch
 class EEGNet(nn.Module):
     def __init__(self, nb_classes=4, Chans=22, Samples=751, dropoutRate=0.5,
-                 kernLength=125, F1=8, D=2, F2=16, dropoutType='Dropout'):
+                 kernLength=250, F1=8, D=2, F2=16, dropoutType='Dropout'):
         
         super(EEGNet, self).__init__()
         self.F1 = F1
@@ -221,7 +221,7 @@ for epoch in range(num_epochs):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     
-    epoch_loss = running_loss / len(dataloader)
+    epoch_loss = running_loss / len(train_loader)
     epoch_acc = correct / total
     print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}')
 
