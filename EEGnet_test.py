@@ -15,7 +15,7 @@ from torch.utils.data.sampler import SubsetRandomSampler
 
 #%% Read GDF file
 # Load the data
-file_path = './BCICIV_2a_gdf/A02T.gdf'
+file_path = './BCICIV_2a_gdf/A01T.gdf'
 #file_path = './BCICIV_2a_gdf/A02E.gdf'
 
 # Set the channel names for EEG and EOG
@@ -93,16 +93,16 @@ The Dataset is already 50Hz notched, 1~100 BP.
 events, event_id = mne.events_from_annotations(eeg)
 
 #%% Epoching the data
-tmin, tmax = 1,4   # Define time range for each epoch (0 to 4 seconds)
+tmin, tmax = 0.5, 2.5   # Define time range for each epoch (0 to 4 seconds)
 epochs = mne.Epochs(eeg, events, event_id={'769': 7, '770': 8, '771': 9, '772': 10}, tmin=tmin, tmax=tmax, baseline=None, preload=True)
 # epochs = mne.Epochs(raw, events, event_id={'783': 7 }, tmin=tmin, tmax=tmax, baseline=None, preload=True)
 # Extract data and labels
 X = epochs.get_data(copy=True)  # shape (n_epochs, n_channels, n_times)
 y = epochs.events[:, -1]-7  # Adjust labels to start from 0
-
+# y = np.eye(4)[y]
 #%% Preparing Data
 # Normalize data
-X = (X - np.mean(X, axis=2, keepdims=True)) / np.std(X, axis=2, keepdims=True)
+# X = (X - np.mean(X, axis=2, keepdims=True)) / np.std(X, axis=2, keepdims=True)
 
 #%% Split into Train/Validation Dataset
 
@@ -118,34 +118,51 @@ class EEGDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx], self.labels[idx]
 
-# Create dataset and dataloader
-dataset = EEGDataset(X, y)
+# # Create dataset and dataloader
+# dataset = EEGDataset(X, y)
 
-validation_split = .2
-shuffle_dataset = True
-random_seed = 42
+# validation_split = .3
+# shuffle_dataset = True
+# random_seed = 42
 
-dataset_size = len(dataset)
-indices = list(range(dataset_size))
-split = int(np.floor(validation_split * dataset_size))
+# dataset_size = len(dataset)
+# indices = list(range(dataset_size))
+# split = int(np.floor(validation_split * dataset_size))
 
-if shuffle_dataset :
-    np.random.seed(random_seed)
-    np.random.shuffle(indices)
-train_indices, val_indices = indices[split:], indices[:split]
+# if shuffle_dataset :
+#     np.random.seed(random_seed)
+#     np.random.shuffle(indices)
+# train_indices, val_indices = indices[split:], indices[:split]
 
-train_sampler = SubsetRandomSampler(train_indices)
-valid_sampler = SubsetRandomSampler(val_indices)
+# train_sampler = SubsetRandomSampler(train_indices)
+# valid_sampler = SubsetRandomSampler(val_indices)
 
-train_loader = DataLoader(dataset, batch_size=32, sampler=train_sampler)
-valid_loader = DataLoader(dataset, batch_size=16, sampler=valid_sampler)
+# train_loader = DataLoader(dataset, batch_size=32, sampler=train_sampler)
+# valid_loader = DataLoader(dataset, batch_size=16, sampler=valid_sampler)
+
+from sklearn.model_selection import StratifiedShuffleSplit
+split_ratio = 0.8
+splitter = StratifiedShuffleSplit(n_splits=1, test_size=1-split_ratio, random_state=42)
+
+for train_idx, val_idx in splitter.split(X, y):
+    train_dataset = X[train_idx]
+    valid_dataset = X[val_idx]
+    train_labels = y[train_idx]
+    valid_labels = y[val_idx]
+
+train_data = EEGDataset(train_dataset, train_labels)
+valid_data = EEGDataset(valid_dataset, valid_labels)
+
+train_loader = DataLoader(train_data, batch_size=32, shuffle=True)
+valid_loader = DataLoader(valid_data, batch_size=32, shuffle=False)
+
 
 #%%
 
 # Defining EEGNet in PyTorch
 class EEGNet(nn.Module):
-    def __init__(self, nb_classes=4, Chans=22, Samples=751, dropoutRate=0.5,
-                 kernLength=250, F1=8, D=2, F2=16, dropoutType='Dropout'):
+    def __init__(self, nb_classes=4, Chans=22, Samples=501, dropoutRate=0.5,
+                 kernLength=125, F1=8, D=2, F2=16, dropoutType='Dropout'):
         
         super(EEGNet, self).__init__()
         self.F1 = F1
@@ -165,8 +182,8 @@ class EEGNet(nn.Module):
         )
         
         self.block2 = nn.Sequential(
-            nn.Conv2d(self.F1 * self.D, self.F1 * self.D, (1, 16), padding='same', groups=self.F1 * self.D, bias=False),
-            nn.Conv2d(self.F1 * self.D, self.F2, (1, 1), bias=False),
+            nn.Conv2d(self.F1 * self.D, self.F1 * self.D, (1, kernLength//4), padding='same', groups=self.F1 * self.D),
+            nn.Conv2d(self.F1 * self.D, self.F2, 1),
             nn.BatchNorm2d(self.F2),
             nn.ELU(),
             nn.AvgPool2d((1, 8)),
@@ -192,13 +209,17 @@ model = EEGNet().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 criterion = nn.CrossEntropyLoss()
 
-num_epochs = 50
+num_epochs = 500
 
 for epoch in range(num_epochs):
     model.train()
     running_loss = 0.0
     correct = 0
     total = 0
+    
+    val_correct = 0
+    val_total = 0
+    
     for data, labels in train_loader:
         data, labels = data.unsqueeze(1).to(device), labels.to(device)
         optimizer.zero_grad()
@@ -218,11 +239,12 @@ for epoch in range(num_epochs):
             outputs = model(data)
             
             _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+            val_total += labels.size(0)
+            val_correct += (predicted == labels).sum().item()
     
     epoch_loss = running_loss / len(train_loader)
     epoch_acc = correct / total
-    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}')
+    val_acc = val_correct / val_total
+    print(f'Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.4f}, Validation: {val_correct} / {val_total}')
 
 print("Training complete.")
