@@ -161,8 +161,8 @@ valid_loader = DataLoader(valid_data, batch_size=32, shuffle=False)
 
 # Defining EEGNet in PyTorch
 class EEGNet(nn.Module):
-    def __init__(self, nb_classes=4, Chans=22, Samples=501, dropoutRate=0.5,
-                 kernLength=125, F1=8, D=2, F2=16, dropoutType='Dropout'):
+    def __init__(self, nb_classes=4, Chans=22, Samples=501, dropoutRate=0.25,
+                 kernLength=63, F1=8, D=2, F2=16, dropoutType='Dropout'):
         
         super(EEGNet, self).__init__()
         self.F1 = F1
